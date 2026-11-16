@@ -24,13 +24,7 @@ EPS = 1e-14
 # ==========================================
 
 @dataclass(frozen=True)
-class Graph(ABC):
-    @abstractmethod
-    def color(self) -> str:
-        """Цвет графика, чтобы одинаковые графики на разных рисунках были одного цвета."""
-
-@dataclass(frozen=True)
-class Problem(Graph):
+class Problem:
     a: float
     b: float
     y0: float
@@ -57,11 +51,9 @@ class Problem(Graph):
     def a_at_start(self, h: float) -> float:
         """Первы расчет a"""
         return (self.b ** 2 * h ** 2) / 2
-    def color(self):
-        return "C0"  
 
 @dataclass(frozen=True)
-class SolutionScheme(Graph):
+class SolutionScheme(ABC):
     problem: Problem
 
     @abstractmethod
@@ -111,8 +103,7 @@ class Scheme9(SolutionScheme):
         if self.problem.A != 0:
             return "Разностная схема (9) для y'' + A*|y'|*y' = b"
         return "Разностная схема (9) для y'' + a*y' = b"
-    def color(self):
-        return "C1"  
+
 class Scheme7(SolutionScheme):
     def solve(self, x):
         """Трёхточечная схема (7). Нужен стартовый y[1] из ряда Тейлора.
@@ -141,8 +132,6 @@ class Scheme7(SolutionScheme):
         if self.problem.A != 0:
             return "Разностная схема (9) для y'' + A*|y'|*y' = b"
         return "Разностная схема (9) для y'' + a*y' = b"
-    def color(self):
-        return "C2"  
     
 # ==========================================
 # Разностные схемы
@@ -162,9 +151,10 @@ def max_error(y: np.ndarray, y_exact: np.ndarray) -> float:
     return float(np.max(np.abs(y - y_exact)))
 
 
-def solve_all(problem: Problem, schemes: list[Scheme], h: float) -> tuple[np.ndarray, np.ndarray, list[tuple[str, str, np.ndarray]]]:
+def solve_all(problem: Problem, schemes: list[Scheme], h: float) -> tuple[np.ndarray, np.ndarray, list[tuple[str, np.ndarray]]]:
+    """Возвращает сетку x, точное решение и для каждой схемы кортеж (имя, y)."""
     x = make_grid(problem, h)
-    return x, problem.exact(x), [(s.name(), s.color(), s.solve(x)) for s in schemes]
+    return x, problem.exact(x), [(s.name(), s.solve(x)) for s in schemes]
 
 
 def run_time(scheme: Scheme, x: np.ndarray, number: int = 10, repeat: int = 5) -> float:
@@ -183,7 +173,7 @@ def convergence(problem: Problem, schemes: list[Scheme], steps: list[float]) -> 
     errors: dict[str, list[float]] = {s.name(): [] for s in schemes}
     for h in steps:
         x, y_exact, solutions = solve_all(problem, schemes, h)
-        for name, color, y in solutions:
+        for name, y in solutions:
             errors[name].append(max_error(y, y_exact))
     return errors
 
@@ -211,9 +201,9 @@ def _get_ax(ax):
 
 def plot_solutions(problem: Problem, h: float, x, y_exact, solutions, ax=None):
     ax = _get_ax(ax)
-    ax.plot(x, y_exact, linewidth=2, color=problem.color(), label="Аналитическое решение")
-    for name, color, y in solutions:
-        ax.plot(x, y, "o--", markersize=4, color=color, label=name)
+    ax.plot(x, y_exact, linewidth=2, label="Аналитическое решение")
+    for name, y in solutions:
+        ax.plot(x, y, "o--", markersize=4, label=name)
 
     ax.set_xlabel("x")
     ax.set_ylabel("y(x)")
@@ -226,9 +216,9 @@ def plot_solutions(problem: Problem, h: float, x, y_exact, solutions, ax=None):
 def plot_errors(x, y_exact, solutions, ax=None):
     """|y_i - y(x_i)| вдоль сетки, логарифмическая шкала."""
     ax = _get_ax(ax)
-    for name, y in solutions.items():
+    for name, y in solutions:
         # +EPS, чтобы точные нули не пропадали с логарифмической оси
-        ax.semilogy(x, np.abs(y - y_exact) + EPS, "o-", markersize=3, color=COLORS.get(name), label=name)
+        ax.semilogy(x, np.abs(y - y_exact) + EPS, "o-", markersize=3, label=name)
     ax.set_xlabel("x")
     ax.set_ylabel(r"$|y_i - y(x_i)|$")
     ax.set_title("Погрешность вдоль сетки")
@@ -237,11 +227,12 @@ def plot_errors(x, y_exact, solutions, ax=None):
     return ax
 
 
-def plot_convergence(problem: Problem, steps: list[float], ax=None):
+def plot_convergence(problem: Problem, schemes: list[Scheme], steps: list[float], ax=None):
     """Зависимость max-ошибки от шага h в log-log масштабе."""
     ax = _get_ax(ax)
-    for name, errs in convergence(problem, steps).items():
-        ax.loglog(steps, errs, "o-", color=COLORS.get(name), label=name)
+    for name, errs in convergence(problem, schemes, steps).items():
+        print(f"{name}: {errs}")
+        ax.loglog(steps, errs, "o-", label=name)
     ax.set_xlabel("h")
     ax.set_ylabel(r"$\max_i |y_i - y(x_i)|$")
     ax.set_title("Сходимость")
@@ -281,7 +272,7 @@ def main(argv: list[str] | None = None) -> None:
     times = time_all(problem, SCHEMES, h)
 
     print(f"Шаг h = {h}")
-    for name, color, y in solutions:
+    for name, y in solutions:
         print(f"{name}: максимальная ошибка {max_error(y, y_exact):.3e}, время {times[name] * 1e3:.4f} мс")
     print()
     convergence_table(problem, SCHEMES, [0.2, 0.1, 0.05, 0.025])
